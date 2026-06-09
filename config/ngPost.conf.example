@@ -1,0 +1,111 @@
+# ngPost configuration for the container.
+#
+# On first boot this file is copied to /config/ngPost.conf (it is NEVER
+# overwritten afterwards). Edit /config/ngPost.conf to set your real server
+# credentials. Full reference: https://github.com/mbruel/ngPost/blob/master/ngPost.conf
+
+lang = EN
+
+## Where the NZBs are written. NZB_POST_CMD (below) then renames each one to
+## embed the archive password so SABnzbd/NZBGet can auto-extract.
+nzbPath  = /output
+
+## Default folder for file selection (the service drives --auto/--monitor with
+## NGPOST_INPUT_DIR; this is just the conf default).
+inputDir = /watch
+
+## Append-only CSV log of every successful post (date, nzb, archive name+pass).
+## This is your record of the generated random passwords -- keep it.
+POST_HISTORY = /config/ngPost_history.csv
+
+## Groups to post to.
+GROUPS   = alt.binaries.boneless
+GROUP_POLICY = EACH_POST
+
+## Generate one random poster email per post (recommended for --auto/--monitor).
+GEN_FROM = true
+
+## Article size and retry behaviour.
+article_size = 716800
+retry = 5
+
+## Article obfuscation. Makes each article's subject a random UUID and drops the
+## poster email -- AND, with the PR #201 patch this image builds in, randomises
+## the filename in every article's yEnc header (no real filename leaks per-part).
+## /!\ With this ON there is NO plaintext metadata on the server: you can ONLY
+## retrieve the post from its NZB. We always write the NZB (to /output), so this
+## is the intended setup here. Comment it out to disable.
+obfuscate = article
+
+## Progress style for `docker logs`: FILES is readable; BAR redraws a lot.
+DISP_PROGRESS = FILES
+
+## Strip accents/special chars from generated nzb names.
+NZB_RM_ACCENTS = true
+
+## Auto-resume a post if the network/VPN blips.
+RESUME_WAIT = 30
+
+# === Deliver the password to the download client =============================
+## After each post, rename the NZB to  <RealName>{{<password>}}.nzb  so SABnzbd
+## and NZBGet read the RAR password straight from the filename and auto-unrar.
+## __nzbName__ = original (real) release name, __rarPass__ = generated password.
+## If you disable GEN_PASS in PACK below, remove this line (you'd get "Name{{}}").
+NZB_POST_CMD = mv "__nzbPath__" "/output/__nzbName__{{__rarPass__}}.nzb"
+
+
+##############################################################
+##           Compression and par2 section                   ##
+##############################################################
+
+## The whole obfuscated/passworded-RAR pipeline, activated by --pack
+## (NGPOST_PACK=true). Drop keywords to change behaviour, e.g. "PACK = GEN_PAR2"
+## for plain par2-only posts (no RAR, no password). Must contain at least
+## COMPRESS or GEN_PAR2 for --auto/--monitor to run.
+PACK = COMPRESS, GEN_NAME, GEN_PASS, GEN_PAR2
+
+## Scratch space for building RAR volumes + par2. For large releases (tens of
+## GB) point this at a big/fast disk by mounting a volume to /config/tmp, or
+## change this path and mount accordingly.
+TMP_DIR = /config/tmp
+
+## REQUIRED for a source build (no par2/rar are bundled, unlike the AppImage).
+RAR_PATH  = /usr/bin/rar
+PAR2_PATH = /usr/bin/par2
+
+## RAR options. ngPost adds `a -idp` itself, `-hp<pass>` when GEN_PASS is on,
+## and `-v<size>m` from RAR_SIZE. -m0 = store (media is already compressed, so
+## skip the CPU-heavy recompression).
+RAR_EXTRA = -m0
+
+## Size of each RAR volume in MB. ~200 MB over a ~12 GB remux gives ~60 parts
+## (Name.part01.rar ... part60.rar), matching the target layout.
+RAR_SIZE = 200
+## Cap the number of volumes; if RAR_SIZE would exceed this, ngPost grows it.
+RAR_MAX = 99
+
+## par2 recovery percentage.
+PAR2_PCT = 5
+
+## Lengths of the random archive name and password.
+##   24 -> e.g. YrKoQHvMY9TjucW897SeHxMY
+##   15 -> e.g. 3Va0EXeaEoFSv0c
+LENGTH_NAME = 24
+LENGTH_PASS = 15
+
+
+##############################################################
+##                   servers section                        ##
+##############################################################
+
+[server]
+host = REPLACE_ME.example.com
+port = 5563
+ssl  = true
+user = REPLACE_ME
+pass = REPLACE_ME
+connection = 25
+enabled = true
+nzbCheck = false
+
+## Add more [server] blocks for backup providers if you have them.

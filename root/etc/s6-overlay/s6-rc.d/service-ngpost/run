@@ -1,0 +1,106 @@
+#!/command/with-contenv bash
+# shellcheck shell=bash
+# shellcheck source=/dev/null
+source /etc/s6-overlay/scripts/bash-functions
+
+umask "${UMASK}"
+
+# This service depends on init-wireguard, so by the time it starts the VPN
+# tunnel is up (or the VPN is disabled). It also keeps the container alive.
+#
+# NGPOST_MODE:
+#   manual            -> idle; trigger uploads on demand:
+#                          docker exec -u hotio <container> ngpost-run
+#   poll  (default)   -> every NGPOST_INTERVAL seconds, run `ngPost --auto` over
+#                          NGPOST_INPUT_DIR. ngPost has no resume DB, so this
+#                          relies on NGPOST_RM_POSTED=true (--rm_posted) to drain
+#                          posted files and avoid re-uploading. Pure directory
+#                          scan each cycle -> works on ANY filesystem, incl.
+#                          Unraid's /mnt/user FUSE share.
+#   monitor           -> ngPost's native --monitor (QFileSystemWatcher/inotify):
+#                          lower latency, but inotify does NOT fire reliably on
+#                          Unraid /mnt/user FUSE shares. Use poll there.
+#
+# Compression/obfuscation (multi-volume passworded RAR + par2) is driven by the
+# conf's `PACK = COMPRESS, GEN_NAME, GEN_PASS, GEN_PAR2`, activated by --pack
+# (NGPOST_PACK=true). That also satisfies ngPost's "--auto/--monitor need
+# --compress" requirement.
+
+CONF="${NGPOST_CONF:-/config/ngPost.conf}"
+INPUT="${NGPOST_INPUT_DIR:-/watch}"
+
+# Assemble the flags shared by poll/monitor/manual runs.
+common_flags() {
+    local -n _out="$1"
+    _out=( -c "${CONF}" )
+    [[ "${NGPOST_PACK,,}" == "true" ]] && _out+=( --pack )
+    [[ "${NGPOST_RM_POSTED,,}" == "true" ]] && _out+=( --rm_posted )
+    # shellcheck disable=SC2206
+    [[ -n "${NGPOST_ARGS}" ]] && _out+=( ${NGPOST_ARGS} )
+}
+
+# One scan+post pass over the input dir (poll mode / startup sweep).
+run_auto() {
+    if [[ ! -d "${INPUT}" ]]; then
+        log_err "[NGPOST] Input dir [${INPUT}] is not accessible."
+        return
+    fi
+    local -a flags; common_flags flags
+    log_inf "[NGPOST] Scanning [${INPUT}] for files to post..."
+    if ! s6-setuidgid hotio ngPost "${flags[@]}" --auto "${INPUT}"; then
+        log_wrn "[NGPOST] Run exited non-zero (nothing to post, or an error)."
+    fi
+}
+
+mode="${NGPOST_MODE:-poll}"; mode="${mode,,}"
+
+case "${mode}" in
+
+    monitor)
+        if [[ "${NGPOST_RM_POSTED,,}" != "true" ]]; then
+            log_wrn "[NGPOST] monitor without NGPOST_RM_POSTED=true keeps sources in place."
+        fi
+        local_flags=()
+        common_flags local_flags
+        log_inf "[NGPOST] Mode: monitor -- watching [${INPUT}] (native inotify)."
+        log_inf "[NGPOST] (On Unraid /mnt/user FUSE shares use NGPOST_MODE=poll instead.)"
+        exec s6-setuidgid hotio ngPost "${local_flags[@]}" --monitor "${INPUT}"
+        ;;
+
+    poll)
+        # Poll mode without --rm_posted is a footgun: ngPost has no resume DB,
+        # so every cycle re-scans /watch and re-uploads everything still
+        # sitting there. Refuse to start instead of letting it happen.
+        # (Use NGPOST_MODE=manual or monitor if you actually want sources to
+        # stay in place.)
+        if [[ "${NGPOST_RM_POSTED,,}" != "true" ]]; then
+            log_err "[NGPOST] poll mode requires NGPOST_RM_POSTED=true (no resume DB; sources would be re-uploaded every cycle). Use NGPOST_MODE=manual or monitor if you need to keep sources in place."
+            exit 1
+        fi
+        # Fail fast on a bad interval -- otherwise sleep="" loops instantly (CPU
+        # burn) or sleep="abc" errors and s6 restarts the service forever.
+        if [[ ! "${NGPOST_INTERVAL}" =~ ^[1-9][0-9]*$ ]]; then
+            log_err "[NGPOST] NGPOST_INTERVAL=[${NGPOST_INTERVAL}] is not a positive integer."
+            exit 1
+        fi
+        log_inf "[NGPOST] Mode: poll -- scanning [${INPUT}] every ${NGPOST_INTERVAL}s."
+        while true; do
+            run_auto
+            log_inf "[NGPOST] Sleeping ${NGPOST_INTERVAL}s..."
+            sleep "${NGPOST_INTERVAL}"
+        done
+        ;;
+
+    manual)
+        log_inf "[NGPOST] Mode: manual -- idle."
+        log_inf "[NGPOST] Run on demand:  docker exec -u hotio <container> ngpost-run"
+        exec sleep infinity
+        ;;
+
+    *)
+        # Unknown value (typo like "poll1", "moniter") used to silently fall
+        # through to manual and look like a working container. Refuse instead.
+        log_err "[NGPOST] Unknown NGPOST_MODE=[${NGPOST_MODE}]. Use poll | monitor | manual."
+        exit 1
+        ;;
+esac

@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>ngpost</Name>
+  <!--
+    This image is built locally from the Dockerfile in this repo, so there is no
+    registry to pull from. On your Unraid box (or any builder), run once:
+
+        docker build -t ngpost-hotio:latest /path/to/ngpost-hotio
+
+    then add this template. If you push to your own registry instead, change
+    <Repository> to e.g. ghcr.io/<you>/ngpost-hotio:latest.
+  -->
+  <Repository>ngpost-hotio:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/mbruel/ngPost/issues</Support>
+  <Project>https://github.com/mbruel/ngPost</Project>
+  <Overview>ngPost (Usenet uploader) built from source with PR #201 (filename obfuscation) and rebuilt on hotio/base:noblevpn so every upload is routed through a built-in WireGuard VPN. Packs files into multi-volume, password-protected RAR sets + PAR2 and writes RealName{{password}}.nzb so SABnzbd/NZBGet auto-extract.[br][br]Build the image first: docker build -t ngpost-hotio:latest /path/to/ngpost-hotio[br][br]SETUP:[br]1. Put your provider's WireGuard config at appdata/ngpost/wireguard/wg0.conf[br]2. Start the container once - it seeds an editable ngPost.conf into appdata/ngpost/[br]3. Edit ngPost.conf: set the [server] host/user/pass, and tune RAR_SIZE / PAR2_PCT / lengths[br]4. Point the Watch folder at where you drop files to upload[br][br]MODES (NGPOST_MODE):[br]poll = scan the Watch folder every NGPOST_INTERVAL seconds (works on /mnt/user).[br]monitor = ngPost's native inotify watcher (do NOT use on /mnt/user FUSE; map Watch to /mnt/cache or /mnt/diskX).[br]manual = idle; upload on demand: docker exec -u hotio ngpost ngpost-run[br][br]If the VPN tunnel fails to come up the container stops on purpose, so nothing uploads on your real IP.</Overview>
+  <Category>Downloaders: MediaApp:Other Network:VPN</Category>
+  <WebUI/>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/mbruel/ngPost/master/src/resources/icons/ngPost.png</Icon>
+  <ExtraParams>--cap-add=NET_ADMIN --device=/dev/net/tun --sysctl net.ipv4.conf.all.src_valid_mark=1 --hostname=ngpost.internal</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>ngPost on hotio/base with a built-in WireGuard VPN. See Overview for setup. Drop files in the Watch folder to upload them; finished NZBs land in the Output folder as RealName{{password}}.nzb.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish/>
+  </Networking>
+  <Data/>
+  <Environment/>
+
+  <!-- ============================ Paths ============================ -->
+  <Config Name="Config (appdata)" Target="/config" Default="/mnt/user/appdata/ngpost" Mode="rw" Description="Holds ngPost.conf, nzb/, tmp/, ngPost_history.csv and the VPN config at wireguard/wg0.conf" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/ngpost</Config>
+  <Config Name="Watch (drop folder)" Target="/watch" Default="/mnt/user/data/usenet/watch" Mode="rw" Description="Drop files/folders here to upload them. NGPOST_INPUT_DIR points here. Created and chowned to PUID:PGID at startup if the host dir doesn't exist yet. With NGPOST_RM_POSTED=true, posted files are DELETED from here - treat it as a spool, not your only copy." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data/usenet/watch</Config>
+  <Config Name="Output (NZBs)" Target="/output" Default="/mnt/user/data/usenet/nzb" Mode="rw" Description="Where finished NZBs are written, named RealName{{password}}.nzb. NGPOST_OUTPUT_DIR points here. Created and chowned to PUID:PGID at startup if the host dir doesn't exist yet." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data/usenet/nzb</Config>
+  <Config Name="Scratch (TMP_DIR, optional)" Target="/config/tmp" Default="" Mode="rw" Description="OPTIONAL: RAR + par2 are staged in TMP_DIR (/config/tmp). Large releases (tens of GB) need that much free space. Map this to a big/fast disk, e.g. /mnt/cache/appdata/ngpost-tmp, to keep it off /mnt/user/appdata. Leave blank to keep tmp inside the Config share." Type="Path" Display="advanced" Required="false" Mask="false"/>
+
+  <!-- ====================== Base (hotio) ENV ====================== -->
+  <Config Name="PUID" Target="PUID" Default="1000" Mode="" Description="User ID to run as." Type="Variable" Display="advanced" Required="true" Mask="false">1000</Config>
+  <Config Name="PGID" Target="PGID" Default="1000" Mode="" Description="Group ID to run as." Type="Variable" Display="advanced" Required="true" Mask="false">1000</Config>
+  <Config Name="UMASK" Target="UMASK" Default="002" Mode="" Description="File mode creation mask." Type="Variable" Display="advanced" Required="false" Mask="false">002</Config>
+  <Config Name="TZ" Target="TZ" Default="Etc/UTC" Mode="" Description="Timezone, e.g. America/New_York." Type="Variable" Display="always" Required="true" Mask="false">Etc/UTC</Config>
+
+  <!-- ============================ VPN ============================ -->
+  <Config Name="VPN_ENABLED" Target="VPN_ENABLED" Default="true" Mode="" Description="Enable the WireGuard VPN. When true a valid wg0.conf must exist under config/wireguard/." Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+  <Config Name="VPN_CONF" Target="VPN_CONF" Default="wg0" Mode="" Description="WireGuard config name (config/wireguard/&lt;name&gt;.conf)." Type="Variable" Display="advanced" Required="false" Mask="false">wg0</Config>
+  <Config Name="VPN_PROVIDER" Target="VPN_PROVIDER" Default="generic" Mode="" Description="generic, proton or pia. With pia, wg0.conf is generated for you." Type="Variable" Display="always" Required="true" Mask="false">generic</Config>
+  <Config Name="VPN_LAN_NETWORK" Target="VPN_LAN_NETWORK" Default="192.168.1.0/24" Mode="" Description="Your LAN subnet(s) so they stay reachable while the VPN is up, e.g. 192.168.1.0/24." Type="Variable" Display="always" Required="false" Mask="false">192.168.1.0/24</Config>
+  <Config Name="VPN_LAN_LEAK_ENABLED" Target="VPN_LAN_LEAK_ENABLED" Default="false" Mode="" Description="Allow LAN traffic to bypass the kill switch." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="VPN_HEALTHCHECK_ENABLED" Target="VPN_HEALTHCHECK_ENABLED" Default="true" Mode="" Description="Stop the container if VPN connectivity is lost (recommended to prevent leaks)." Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="VPN_AUTO_PORT_FORWARD" Target="VPN_AUTO_PORT_FORWARD" Default="false" Mode="" Description="Automatic port forwarding for proton/pia. Not needed for an outbound uploader." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="VPN_PORT_REDIRECTS" Target="VPN_PORT_REDIRECTS" Default="" Mode="" Description="Custom port redirect mappings (advanced)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="VPN_EXPOSE_PORTS_ON_LAN" Target="VPN_EXPOSE_PORTS_ON_LAN" Default="" Mode="" Description="Selectively expose ports on the LAN (advanced)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="VPN_NAMESERVERS" Target="VPN_NAMESERVERS" Default="" Mode="" Description="Override DNS servers used inside the tunnel (advanced)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="VPN_INTERFACE_PREFIXES" Target="VPN_INTERFACE_PREFIXES" Default="" Mode="" Description="Extra interface prefixes (advanced)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <!-- ===================== PIA credentials ===================== -->
+  <Config Name="VPN_PIA_USER" Target="VPN_PIA_USER" Default="" Mode="" Description="PIA username (only if VPN_PROVIDER=pia)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="VPN_PIA_PASS" Target="VPN_PIA_PASS" Default="" Mode="" Description="PIA password (only if VPN_PROVIDER=pia)." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="VPN_PIA_PREFERRED_REGION" Target="VPN_PIA_PREFERRED_REGION" Default="" Mode="" Description="PIA region (only if VPN_PROVIDER=pia)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <!-- ===================== Optional services ===================== -->
+  <Config Name="PRIVOXY_ENABLED" Target="PRIVOXY_ENABLED" Default="false" Mode="" Description="Run an HTTP proxy (Privoxy) on 8118 routed through the VPN." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="UNBOUND_ENABLED" Target="UNBOUND_ENABLED" Default="false" Mode="" Description="Run the Unbound DNS resolver." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="UNBOUND_NAMESERVERS" Target="UNBOUND_NAMESERVERS" Default="" Mode="" Description="Upstream nameservers for Unbound (advanced)." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+
+  <!-- ============================ ngPost ============================ -->
+  <Config Name="NGPOST_MODE" Target="NGPOST_MODE" Default="poll" Mode="" Description="poll = re-scan the Watch folder every NGPOST_INTERVAL seconds and post new files (works on /mnt/user FUSE). monitor = ngPost's native inotify watcher, lower latency but does NOT fire on /mnt/user FUSE (map Watch to /mnt/cache or /mnt/diskX). manual = idle; upload on demand via 'docker exec -u hotio ngpost ngpost-run'." Type="Variable" Display="always" Required="false" Mask="false">poll</Config>
+  <Config Name="NGPOST_INTERVAL" Target="NGPOST_INTERVAL" Default="300" Mode="" Description="poll mode: seconds between scans of the Watch folder." Type="Variable" Display="advanced" Required="false" Mask="false">300</Config>
+  <Config Name="NGPOST_INPUT_DIR" Target="NGPOST_INPUT_DIR" Default="/watch" Mode="" Description="Directory ngPost uploads from (inside the container). Match this to the Watch path target. Created and chowned to PUID:PGID at startup if it doesn't exist." Type="Variable" Display="advanced" Required="false" Mask="false">/watch</Config>
+  <Config Name="NGPOST_OUTPUT_DIR" Target="NGPOST_OUTPUT_DIR" Default="/output" Mode="" Description="Directory finished NZBs are written to (inside the container). Match this to the Output path target and the nzbPath / NZB_POST_CMD in ngPost.conf. Created and chowned to PUID:PGID at startup if it doesn't exist." Type="Variable" Display="advanced" Required="false" Mask="false">/output</Config>
+  <Config Name="NGPOST_PACK" Target="NGPOST_PACK" Default="true" Mode="" Description="true = pass --pack so the conf's PACK line (COMPRESS, GEN_NAME, GEN_PASS, GEN_PAR2) is applied: passworded multi-volume RAR + par2. Set false only if you drive compression via NGPOST_ARGS instead." Type="Variable" Display="always" Required="false" Mask="false">true</Config>
+  <Config Name="NGPOST_RM_POSTED" Target="NGPOST_RM_POSTED" Default="true" Mode="" Description="true = pass --rm_posted: DELETE each file/folder from the Watch folder after it posts successfully. HARD-REQUIRED for poll mode -- ngPost has no resume DB, so without this every cycle would re-upload everything still in /watch. The container refuses to start in poll mode when this is false; use NGPOST_MODE=manual or monitor if you need sources to stay in place. Destructive: keep the Watch folder a spool, not your only copy." Type="Variable" Display="always" Required="false" Mask="false">true</Config>
+  <Config Name="NGPOST_ARGS" Target="NGPOST_ARGS" Default="" Mode="" Description="Extra ngPost flags appended to every run, e.g. --disp_progress files." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>

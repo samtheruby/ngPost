@@ -1,0 +1,33 @@
+#!/command/with-contenv bash
+# Convenience wrapper for on-demand uploads (handy in manual mode).
+#
+#   # Post everything currently in NGPOST_INPUT_DIR using the conf's PACK:
+#   docker exec -u hotio <container> ngpost-run
+#   # Plain `docker exec` (as root) also works; we drop to hotio ourselves.
+#
+#   # Post a single file/folder with your own flags:
+#   docker exec -u hotio <container> ngpost-run -i "/watch/Movie.mkv"
+#   docker exec -u hotio <container> ngpost-run --help
+#
+set -e
+
+# If invoked as root (plain `docker exec` without -u hotio), drop to the hotio
+# user before running ngPost -- otherwise the run writes root-owned files into
+# /config/tmp and the next service run as hotio can't clean them up.
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    exec s6-setuidgid hotio "$0" "$@"
+fi
+
+CONF="${NGPOST_CONF:-/config/ngPost.conf}"
+
+if [[ $# -eq 0 ]]; then
+    # No args -> mirror the service's poll behaviour: --pack [--rm_posted] --auto
+    flags=( -c "${CONF}" )
+    [[ "${NGPOST_PACK,,}" == "true" ]] && flags+=( --pack )
+    [[ "${NGPOST_RM_POSTED,,}" == "true" ]] && flags+=( --rm_posted )
+    # shellcheck disable=SC2206
+    [[ -n "${NGPOST_ARGS}" ]] && flags+=( ${NGPOST_ARGS} )
+    exec ngPost "${flags[@]}" --auto "${NGPOST_INPUT_DIR:-/watch}"
+fi
+
+exec ngPost -c "${CONF}" "$@"

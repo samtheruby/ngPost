@@ -1,0 +1,50 @@
+services:
+  ngpost:
+    build:
+      context: .
+      # args:
+      #   HOTIO_TAG: noblevpn   # final base (Ubuntu/glibc -- needed for `rar`)
+      #   NGPOST_REPO: https://github.com/samtheruby/ngPost.git  # fork w/ obfuscation
+      #   NGPOST_REF: 4547603daa71d35ea5990600fed3b167f92a63f0   # obfuscation-fix pin
+    image: ngpost-hotio:latest
+    container_name: ngpost
+    restart: unless-stopped
+
+    # --- Required for WireGuard ------------------------------------------
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - UMASK=002
+      - TZ=Etc/UTC
+
+      # --- VPN (provided by hotio/base) --------------------------------
+      - VPN_ENABLED=true
+      - VPN_CONF=wg0                      # uses /config/wireguard/wg0.conf
+      - VPN_PROVIDER=generic              # generic | proton | pia
+      - VPN_LAN_NETWORK=192.168.1.0/24    # your LAN, so it stays reachable
+      - VPN_AUTO_PORT_FORWARD=false       # only useful for proton/pia
+      - VPN_HEALTHCHECK_ENABLED=true      # kill container if the tunnel drops
+
+      # --- ngPost ------------------------------------------------------
+      - NGPOST_MODE=poll                  # manual | poll | monitor
+      - NGPOST_INTERVAL=300               # poll mode: seconds between scans
+      - NGPOST_INPUT_DIR=/watch           # drop folder ngPost uploads from
+      - NGPOST_PACK=true                  # apply conf PACK (compress+gen_name/pass/par2)
+      - NGPOST_RM_POSTED=true             # DESTRUCTIVE; hard-required in poll mode
+      # - NGPOST_ARGS=--disp_progress files   # extra ngPost flags
+
+    volumes:
+      # App config: ngPost.conf, nzb/, tmp/, history, and the VPN config at
+      # <config>/wireguard/wg0.conf
+      - ./appdata/config:/config
+      # Drop folder -- files placed here get uploaded (and deleted if RM_POSTED):
+      - /host/path/to/watch:/watch
+      # Where the finished NZBs land (Name{{password}}.nzb):
+      - /host/path/to/nzb:/output

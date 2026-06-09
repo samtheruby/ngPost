@@ -1,0 +1,71 @@
+#!/command/with-contenv bash
+# shellcheck shell=bash
+# shellcheck source=/dev/null
+source /etc/s6-overlay/scripts/bash-functions
+
+set -e
+umask "${UMASK}"
+
+# Drop the default, editable config into the mounted /config on first run.
+# We never overwrite an existing file, so your edits/secrets are safe.
+install_default() {
+    local src="${APP_DIR}/$1" dst="${CONFIG_DIR}/$2"
+    if [[ ! -f "${dst}" ]]; then
+        log_inf "[NGPOST] Installing default ${2}..."
+        cp "${src}" "${dst}"
+    fi
+}
+
+install_default "ngPost.conf" "ngPost.conf"
+
+# Directories referenced by the default config and the service.
+#   nzb    -> legacy nzbPath under /config (unused when /output is bind-mounted)
+#   tmp    -> TMP_DIR for RAR + par2 staging (override for very large releases)
+#   watch  -> NGPOST_INPUT_DIR  (drop folder)  -- created if not a mount yet
+#   output -> NGPOST_OUTPUT_DIR (finished NZBs land here per ngPost.conf
+#             nzbPath / NZB_POST_CMD) -- created if not a mount yet
+mkdir -p "${CONFIG_DIR}/nzb" "${CONFIG_DIR}/tmp" \
+    "${NGPOST_INPUT_DIR:-/watch}" "${NGPOST_OUTPUT_DIR:-/output}"
+
+log_inf "[NGPOST] Taking ownership of ngPost files in [${CONFIG_DIR}]..."
+chown hotio:hotio \
+    "${CONFIG_DIR}/ngPost.conf" \
+    "${CONFIG_DIR}/nzb" \
+    "${CONFIG_DIR}/tmp"
+
+# Watch + output are usually bind mounts owned by the host. hotio/base already
+# remapped the "hotio" user to PUID:PGID, so chowning to hotio:hotio sets the
+# right uid/gid. Best-effort: never fail boot if the FS rejects the chown, but
+# DO surface the failure so the user has a breadcrumb when ngPost later hits
+# Permission denied (the common cause is a host dir created by root with no
+# group-write, or an NFS/SMB mount that refuses chown).
+chown_best_effort() {
+    local dir="$1"
+    if ! chown hotio:hotio "${dir}" 2>/dev/null; then
+        log_wrn "[NGPOST] chown hotio:hotio [${dir}] failed -- ngPost may not be able to read/write here. Fix on the host: chown -R \${PUID}:\${PGID} <host path>."
+    fi
+}
+chown_best_effort "${NGPOST_INPUT_DIR:-/watch}"
+chown_best_effort "${NGPOST_OUTPUT_DIR:-/output}"
+
+# Warn loudly if the conf's output paths don't actually point at where the env
+# var says NZBs go: ngPost.conf has no env-var expansion, so changing
+# NGPOST_OUTPUT_DIR without editing nzbPath / NZB_POST_CMD silently writes the
+# NZBs to the OLD path and the new output mount stays empty.
+OUT_DIR="${NGPOST_OUTPUT_DIR:-/output}"
+CONF_FILE="${CONFIG_DIR}/ngPost.conf"
+if [[ -f "${CONF_FILE}" && "${OUT_DIR}" != "/output" ]]; then
+    if ! grep -qE "^[[:space:]]*nzbPath[[:space:]]*=[[:space:]]*${OUT_DIR}([[:space:]]|$)" "${CONF_FILE}"; then
+        log_wrn "[NGPOST] NGPOST_OUTPUT_DIR=[${OUT_DIR}] but [${CONF_FILE}] nzbPath is different -- finished NZBs will NOT land in the bind-mounted output dir until you edit the conf."
+    fi
+    if grep -q "NZB_POST_CMD" "${CONF_FILE}" && ! grep -qF "${OUT_DIR}" "${CONF_FILE}"; then
+        log_wrn "[NGPOST] NGPOST_OUTPUT_DIR=[${OUT_DIR}] but NZB_POST_CMD in the conf still references the old output path."
+    fi
+fi
+
+# VPN kill-switch is implemented by hotio's service-healthcheck (depends on
+# VPN_ENABLED=true). With VPN_ENABLED!=true ngPost uploads on the host's real
+# public IP. Loud warning so this can't happen silently.
+if [[ "${VPN_ENABLED,,}" != "true" ]]; then
+    log_wrn "[NGPOST] VPN_ENABLED=[${VPN_ENABLED:-unset}] -- uploads will use the HOST'S public IP. No kill switch."
+fi
