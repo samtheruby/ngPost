@@ -45,6 +45,15 @@ run_auto() {
         log_err "[NGPOST] Input dir [${INPUT}] is not accessible."
         return
     fi
+    # ngPost --auto on an EMPTY directory never exits -- it sits in its Qt event
+    # loop forever instead of returning. In poll mode that wedges the whole
+    # while-loop (no further scans, no sleep) the first time we scan an empty
+    # /watch. Skip the run when there's nothing to post; the next cycle picks up
+    # anything dropped in the meantime.
+    if [[ -z "$(ls -A "${INPUT}" 2>/dev/null)" ]]; then
+        log_inf "[NGPOST] [${INPUT}] is empty; nothing to post."
+        return
+    fi
     local -a flags; common_flags flags
     log_inf "[NGPOST] Scanning [${INPUT}] for files to post..."
     if ! s6-setuidgid hotio ngPost "${flags[@]}" --auto "${INPUT}"; then
